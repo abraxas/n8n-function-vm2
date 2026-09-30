@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="header.png" alt="Abraxas Labs — n8n-function-vm2" width="100%">
+  <img src="header.png" alt="Abraxas Labs - n8n-function-vm2" width="100%">
 </p>
 
 <p align="center">
@@ -14,159 +14,70 @@
 
 # n8n-function-vm2
 
-**n8n** `2.42.0` — n8n GmbH
+**n8n** `2.42.0` - n8n GmbH
 
-Unpublished n8n source finding: hidden Function / FunctionItem / LangChain Code nodes still execute JavaScript via leftover vm2 NodeVM in the n8n main process. Palette hide is not an ACL. Code v2 already runs in the task-runner child. Distinct from GHSA-j4p8, which moved n8n-nodes-base.code only.
+[GHSA-j4p8-h8mh-rh8q](https://github.com/n8n-io/n8n/security/advisories/GHSA-j4p8-h8mh-rh8q) moved **`n8n-nodes-base.code`** onto the JS task-runner child. Production spawn adds `--disallow-code-generation-from-strings` and `--disable-proto=delete`. The leftover is the nodes they hid instead of moving. [`Function.node.ts`](https://github.com/n8n-io/n8n/blob/n8n%402.42.0/packages/nodes-base/nodes/Function/Function.node.ts) is `hidden: true`. So is FunctionItem. So is LangChain Code. Palette hide is a UI flag. Workflow JSON save/import still resolves the type. Default `NODES_EXCLUDE` is only Execute Command and Local File Trigger. The execute path is in-process **vm2** `NodeVM` 3.12.2 in the n8n main process.
+
+**A default member who can create a workflow can run JS in the n8n main process. Hidden is not an ACL.**
 
 | | |
 |---|---|
-| ID | Unpublished n8n source finding #1 (no CVE yet) |
-| CWE | [CWE-94, CWE-269](https://cwe.mitre.org/data/definitions/269.html) |
+| ID | no CVE yet |
+| CWE | [CWE-94](https://cwe.mitre.org/data/definitions/94.html), [CWE-269](https://cwe.mitre.org/data/definitions/269.html) |
 | CVSS | **High: 8.8** `CVSS:3.1/AV:N/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H` |
 | Product | [n8n](https://github.com/n8n-io/n8n) |
-| Affected | all versions **through 2.42.0** (inclusive) |
-| Patched | vendor patch — see references |
-| Auth | authenticated (see source map) |
+| Affected | through **2.42.0** (`86c23326`); leftover of GHSA-j4p8 |
+| Auth | authenticated member with workflow create/import/execute |
 | License | [GNU Affero GPL v3.0](LICENSE) |
-| Lab | `127.0.0.1` only · vendor/client disclosure pack, not a scanner |
+| Lab | `127.0.0.1` only |
 
----
+## What an attacker can do
 
-## Advisory (from the source map)
+As a default member, import or create a workflow whose node `type` is `n8n-nodes-base.function` (or `functionItem`, or `@n8n/n8n-nodes-langchain.code`) and execute it. The JS runs **in the n8n main process**.
 
-Function.node.ts 20-24 hidden:true; 161-180 new NodeVM + vm.run. FunctionItem.node.ts same. @n8n/nodes-langchain code JavaScriptSandbox. Contrast Code.node.ts JsTaskRunnerSandbox. nodes.config.ts 37-38 default exclude executeCommand + localFileTrigger. GHSA-j4p8 moved n8n-nodes-base.code only.
+That is host RCE as the n8n UID: instance secrets, other users' credential ciphertext on disk, the DB. Multi-tenant member to instance takeover. Not OS LPE. Not unauthenticated. Code v2 on the same instance does not see `process` that way.
 
----
+Same product, sibling leftover: [Databricks path join](https://github.com/abraxas/n8n-databricks-path-join).
 
-## Entry
+## How I found it
 
-- **Method:** `POST`
-- **Path:** `/rest/workflows`
-- **Router:** Hidden Function node still loaded. Palette hidden is not an ACL. Default NODES_EXCLUDE is executeCommand + localFileTrigger. Function.node.ts NodeVM vm.run in the n8n main process.
-- **Notes:** Authenticated unpublished n8n #1 CWE-94 n8n@2.42.0. Default member with workflow:create. Witness: Function pid equals n8n main PID; Code v2 process blocked. Do not attach a vm2 exploit gadget. Disclose GitHub Security Advisories only, not a public GitHub issue.
+I read the 16 September 2026 GHSA wave first, then ten hunts on tag **n8n@2.42.0**. Expression sandbox, Code/Function/vm2, credentials, webhooks, HTTP/SSRF, Git node, community packages, auth/SSO, node injection, public API. Most of the Highs in that wave are closed on this pin. Code was not finished.
 
-### Call chain
+v3 breaking-change rules already mark Function / FunctionItem **removed**. On 2.42.0 they are leftover, not an intended long-term sandbox. Function also injects `this.helpers`, including helpers the JS runner lists as unsupported. I did not need a public vm2 gadget to prove the process boundary.
 
-- `POST /rest/owner/setup`
-- `POST /rest/invitations role=global:member`
-- `POST /rest/invitations/accept`
-- `POST /rest/workflows type=n8n-nodes-base.function`
-- `POST /rest/workflows/:id/run`
-- `GET /rest/executions/:id Function pid == n8n main; Code v2 process blocked`
+I stood up stock `n8nio/n8n:2.42.0`, signed up a **member** (not instance owner), imported `n8n-nodes-base.function`, executed it. Function `pid=7` is the n8n main PID. Same JS in Code v2: `hasProcess: false`. Task-runner child is pid 26. Witness `N8N-FUNCTION-VM2-WITNESS`.
 
-### Lab preconditions
+Wrong turns already recorded: Function type rejected as hidden/unknown (then the node is actually excluded); Function pid equal to the task-runner child (then it already moved); Code v2 seeing `process` (then the runner is not the control); a vm2 exploit gadget, a reverse shell, OS LPE. Theatre. The witness is main PID vs `hasProcess: false`.
 
-- n8n 2.42.0 (n8nio/n8n:2.42.0)
-- Default NODES_EXCLUDE (Execute Command + Local File Trigger only)
-- Attacker is a default member with workflow:create on a personal project
-- No extra node allowlist required; hidden Function still loads
-
-### Witness
-
-N8N-FUNCTION-VM2-WITNESS; Function process.pid equals n8n main PID; Code v2 hasProcess false
-
-### Not success
-
-- eval/base64/system payload
-- reverse shell
-- vm2 exploit gadget in the pack
-- Function type rejected as hidden/unknown
-- Function pid equals the task-runner child
-- OS LPE
-
----
-
-## Patch / remediation
-
-**Do this first:** Apply the vendor patch for **n8n**. See references.
-
-**Verify after upgrade**
-
-- Re-run `n8n-function-vm2-Abraxas-Labs.py` against the patched build: the mapped witness must **not** appear.
-- Confirm the vendor advisory / changeset in the deployed tree (see references).
-- A WAF signature is delay, not a patch.
-
-**If you cannot update immediately**
-
-- Disable or isolate the affected component.
-- Hunt for the witness condition on production (new privileged users, unexpected files, injected rows — whatever this CVE's map names).
-
----
-
-## Reproduction (authorized lab)
-
-Target **only** `http://127.0.0.1:18201` (or the loopback you bound). Do not point this script at the internet.
-
-Official image `n8nio/n8n:2.42.0` on loopback `:18201`. Then:
+## Lab
 
 ```bash
 cd lab
 ./run.sh
 ```
 
-Or, with the stack already up:
+Target **only** `http://127.0.0.1:18201`. Default `NODES_EXCLUDE`. Attacker is a member.
 
-```bash
-python3 n8n-function-vm2-Abraxas-Labs.py http://127.0.0.1:18201
+```text
+authenticated-as=member
+function-fields pid=7 witness=N8N-FUNCTION-VM2-WITNESS
+code-fields hasProcess=False pid=None
+compare function_pid=7 code_pid=None main_pid=7 runner_pid=26 who=member
+SUCCESS N8N-FUNCTION-VM2 who=member function_pid=7 code_pid=None main_pid=7 runner_pid=26 N8N-FUNCTION-VM2-WITNESS
 ```
 
-Success is the **witness** above in the execution JSON (`N8N-FUNCTION-VM2-WITNESS` and Function pid = n8n main). Generic 200 HTML is not it. This pack does **not** include a vm2 exploit gadget.
+## The fix
 
----
-
-## Lab images
-
-Loopback stack used to reproduce. Official images unless a `Dockerfile` in this folder builds from source.
-
-- [`lab/docker-compose.yml`](lab/docker-compose.yml)
-- [`lab/Dockerfile`](lab/Dockerfile)
-- [`lab/run.sh`](lab/run.sh)
-
-Publish nothing except `127.0.0.1`.
-
----
+Add `n8n-nodes-base.function`, `n8n-nodes-base.functionItem`, and `@n8n/n8n-nodes-langchain.code` to default `NODES_EXCLUDE`, or route them through `JsTaskRunnerSandbox` the way Code v2 already does. Palette `hidden` is not enough.
 
 ## References
 
-- [github.com/n8n-io/n8n](https://github.com/n8n-io/n8n) tag n8n@2.42.0
-- Sibling leftover: [GHSA-j4p8-h8mh-rh8q](https://github.com/n8n-io/n8n/security/advisories/GHSA-j4p8-h8mh-rh8q) (Code node only)
-- Vendor intake: [GitHub Security Advisories](https://github.com/n8n-io/n8n/security/advisories/new). Do **not** open a public GitHub issue.
-
-- Abraxas Labs: [abraxaslabs.tech](https://abraxaslabs.tech) · [github.com/abraxas](https://github.com/abraxas) · [@abraxas_null](https://x.com/abraxas_null)
-
----
-
-## Records (structured)
-
-```
-# n8n unpublished #1 — Hidden Function still vm2 in-process
-
-CWE: CWE-94, CWE-269
-Severity: High (HTTP lab SUCCESS, 82%)
-
-## Description
-
-Palette `hidden: true` is not an ACL. `n8n-nodes-base.function` (and FunctionItem / LangChain Code) still compile JS with leftover vm2 `NodeVM` in the n8n main process. Default `NODES_EXCLUDE` is only Execute Command and Local File Trigger. Code v2 already uses the task-runner child with `--disallow-code-generation-from-strings`.
-
-## Product
-
-n8n 2.42.0 (`n8nio/n8n:2.42.0`). Lab oracle: `N8N-FUNCTION-VM2-WITNESS` — Function `process.pid` equals the n8n main PID; Code v2 `hasProcess` is false. Not OS LPE. Do not ship a vm2 gadget.
-```
-
----
+- [github.com/n8n-io/n8n](https://github.com/n8n-io/n8n) tag [n8n@2.42.0](https://github.com/n8n-io/n8n/releases/tag/n8n%402.42.0)
+- [`Function.node.ts`](https://github.com/n8n-io/n8n/blob/n8n%402.42.0/packages/nodes-base/nodes/Function/Function.node.ts) · [`Code.node.ts`](https://github.com/n8n-io/n8n/blob/n8n%402.42.0/packages/nodes-base/nodes/Code/Code.node.ts) · [`nodes.config.ts`](https://github.com/n8n-io/n8n/blob/n8n%402.42.0/packages/%40n8n/config/src/configs/nodes.config.ts) · [`task-runner-process-js.ts`](https://github.com/n8n-io/n8n/blob/n8n%402.42.0/packages/cli/src/task-runners/task-runner-process-js.ts)
+- Nearby patched: [GHSA-j4p8-h8mh-rh8q](https://github.com/n8n-io/n8n/security/advisories/GHSA-j4p8-h8mh-rh8q)
+- Same product: [n8n-databricks-path-join](https://github.com/abraxas/n8n-databricks-path-join)
+- [CWE-94](https://cwe.mitre.org/data/definitions/94.html) · [CWE-269](https://cwe.mitre.org/data/definitions/269.html)
 
 ## License
 
-This disclosure pack is licensed under the **GNU Affero General Public License v3.0**. See [LICENSE](LICENSE).
-
----
-
-## Disclaimer
-
-This pack is for **the vendor, the site owner, and licensed labs**. The script talks to `127.0.0.1`. Using it against systems you do not own is not authorized by Abraxas Labs. No warranty.
-
-<p align="center">
-  <a href="https://abraxaslabs.tech">abraxaslabs.tech</a> ·
-  <a href="https://github.com/abraxas">github.com/abraxas</a> ·
-  <a href="https://x.com/abraxas_null">@abraxas_null</a>
-</p>
+GNU Affero GPL v3.0. See [LICENSE](LICENSE). Loopback lab only. No warranty.
