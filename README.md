@@ -13,6 +13,10 @@
   &nbsp;·&nbsp;
   <a href="https://github.com/abraxas/n8n-function-vm2">n8n-function-vm2</a>
 </p>
+<p align="center">
+  Write-up: <a href="https://abraxaslabs.tech/research/n8n-function-vm2"><strong>https://abraxaslabs.tech/research/n8n-function-vm2</strong></a>
+</p>
+
 
 # n8n-function-vm2
 
